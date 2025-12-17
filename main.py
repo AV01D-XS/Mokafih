@@ -4,6 +4,7 @@ import time
 import secrets
 import logging
 import asyncio
+import httpx
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 
@@ -382,6 +383,8 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
     res = analyze(text)
 
     ai_score = await aitana_score(text)
+    log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
+
 
     # AI can only escalate, never downgrade
     if ai_score >= 0.85:
