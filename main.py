@@ -41,6 +41,48 @@ logging.basicConfig(
 )
 log = logging.getLogger("Mokafih")
 
+#======================
+#test 
+#=====================
+HF_API_KEY = os.getenv("HF_API_KEY")
+HF_MODEL = os.getenv("HF_MODEL")
+
+async def aitana_score(text: str) -> float:
+    """
+    Returns fraud likelihood between 0.0 and 1.0
+    Fail-safe: never crashes, never blocks
+    """
+    if not HF_API_KEY or not HF_MODEL:
+        return 0.0
+
+    payload = {"inputs": text[:4000]}
+    headers = {
+        "Authorization": f"Bearer {HF_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(
+                f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+                headers=headers,
+                json=payload,
+            )
+
+        if r.status_code != 200:
+            return 0.0
+
+        data = r.json()
+
+        if isinstance(data, list):
+            for item in data:
+                if item.get("label", "").lower() in ("fraud", "scam", "malicious"):
+                    return float(item.get("score", 0.0))
+        return 0.0
+
+    except Exception:
+        return 0.0
+
 # =========================================================
 # STRINGS
 # =========================================================
@@ -330,6 +372,30 @@ def analyze(text: str) -> AnalysisResult:
         hypotheses=hypotheses[:3],
     )
 
+    # =========================================================
+# AI + HEURISTIC FUSION (Aitana)
+# =========================================================
+async def analyze_with_ai(text: str) -> AnalysisResult:
+    """
+    Wraps analyze() and allows AI to ESCALATE risk only.
+    """
+    res = analyze(text)
+
+    ai_score = await aitana_score(text)
+
+    # AI can only escalate, never downgrade
+    if ai_score >= 0.85:
+        res.posture = "high"
+        if "AI-detected fraud pattern" not in res.hypotheses:
+            res.hypotheses.insert(0, "AI-detected fraud pattern")
+
+    elif ai_score >= 0.60 and res.posture == "low":
+        res.posture = "medium"
+        res.hypotheses.insert(0, "AI-detected suspicious pattern")
+
+    return res
+
+
 # =========================================================
 # UI
 # =========================================================
@@ -571,7 +637,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not allowed:
         return
 
-    res = analyze(update.message.text)
+    res = await analyze_with_ai(update.message.text)
     aid = secrets.token_hex(6)
 
     try:
