@@ -6,7 +6,7 @@ import logging
 import asyncio
 import httpx
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List
 
 import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -42,18 +42,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("Mokafih")
 
-#======================
-#test 
-#=====================
+# ======================
+# Hugging Face config
+# ======================
 HF_API_KEY = os.getenv("HF_API_KEY")
 HF_MODEL = os.getenv("HF_MODEL")
 
+log.info("HF_API_KEY set=%s HF_MODEL=%s", bool(HF_API_KEY), HF_MODEL)
+
+
 async def aitana_score(text: str) -> float:
     """
-    Returns fraud likelihood between 0.0 and 1.0
-    Fail-safe: never crashes, never blocks
+    Returns fraud likelihood between 0.0 and 1.0 using Hugging Face Inference API.
+    Fail-safe: never crashes, never blocks for too long.
     """
+    # If env vars are missing, do nothing
     if not HF_API_KEY or not HF_MODEL:
+        log.warning("HF missing: key=%r model=%r", HF_API_KEY, HF_MODEL)
         return 0.0
 
     payload = {"inputs": text[:4000]}
@@ -63,26 +68,47 @@ async def aitana_score(text: str) -> float:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(
                 f"https://api-inference.huggingface.co/models/{HF_MODEL}",
                 headers=headers,
                 json=payload,
             )
 
+        log.warning("HF status=%s body=%s", r.status_code, r.text[:400])
+
         if r.status_code != 200:
+            # Non-200: token, model, or quota issues
             return 0.0
 
         data = r.json()
+        # Standard text-classification response is a list of {label, score} objects. [web:1][web:8]
+        if not isinstance(data, list) or not data:
+            return 0.0
 
-        if isinstance(data, list):
-            for item in data:
-                if item.get("label", "").lower() in ("fraud", "scam", "malicious"):
-                    return float(item.get("score", 0.0))
+        # Pick the label with highest score
+        best = max(data, key=lambda x: x.get("score", 0.0))
+        label = str(best.get("label", "")).lower()
+        score = float(best.get("score", 0.0))
+
+        log.warning("HF best label=%s score=%.3f", label, score)
+
+        # Map your model's labels to "fraud probability".
+        # Adjust these mappings based on the actual labels returned by your model.
+        fraud_like_labels = {"fraud", "scam", "malicious", "label_1"}
+        if label in fraud_like_labels:
+            return score
+
+        # Example: if using a negative/positive sentiment model
+        if label in {"negative", "neg"}:
+            return score
+
         return 0.0
 
-    except Exception:
+    except Exception as e:
+        log.exception("HF error: %s", e)
         return 0.0
+
 
 # =========================================================
 # STRINGS
@@ -311,11 +337,13 @@ EN_CONTEXT = ["bank", "payment", "delivery", "account", "invoice", "wallet"]
 
 URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
+
 @dataclass
 class AnalysisResult:
     posture: str
     signals: List[str]
     hypotheses: List[str]
+
 
 def analyze(text: str) -> AnalysisResult:
     t = text.lower()
@@ -373,7 +401,8 @@ def analyze(text: str) -> AnalysisResult:
         hypotheses=hypotheses[:3],
     )
 
-    # =========================================================
+
+# =========================================================
 # AI + HEURISTIC FUSION (Aitana)
 # =========================================================
 async def analyze_with_ai(text: str) -> AnalysisResult:
@@ -385,13 +414,11 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
     ai_score = await aitana_score(text)
     log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
 
-
     # AI can only escalate, never downgrade
     if ai_score >= 0.85:
         res.posture = "high"
         if "AI-detected fraud pattern" not in res.hypotheses:
             res.hypotheses.insert(0, "AI-detected fraud pattern")
-
     elif ai_score >= 0.60 and res.posture == "low":
         res.posture = "medium"
         res.hypotheses.insert(0, "AI-detected suspicious pattern")
@@ -410,6 +437,7 @@ def feedback_kb(aid: str, lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(S["scam"], callback_data=f"fb:{aid}:scam"),
         ]
     ])
+
 
 def build_report(res: AnalysisResult, lang: str) -> str:
     S = STRINGS[lang]
@@ -453,11 +481,13 @@ def build_report(res: AnalysisResult, lang: str) -> str:
 
     return "\n".join(lines)
 
+
 # =========================================================
 # LICENSING ENFORCEMENT
 # =========================================================
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
 
 async def require_license_or_reject(update: Update, lang: str) -> bool:
     """
@@ -492,6 +522,7 @@ async def require_license_or_reject(update: Update, lang: str) -> bool:
 
     return True
 
+
 # =========================================================
 # COMMANDS
 # =========================================================
@@ -501,6 +532,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         lang = "en"
     await update.effective_message.reply_text(STRINGS[lang]["welcome"])
+
 
 async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -514,6 +546,7 @@ async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         STRINGS[new_lang]["lang_set_ar"] if new_lang == "ar" else STRINGS[new_lang]["lang_set_en"]
     )
+
 
 async def cmd_genkey(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -547,6 +580,7 @@ async def cmd_genkey(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.effective_message.reply_text(f"✅ Key: `{key}`", parse_mode=ParseMode.MARKDOWN)
+
 
 async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -594,6 +628,7 @@ async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.effective_message.reply_text(f"{S['login_ok']} {lic['company']}")
 
+
 async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     lang = "en"
@@ -621,6 +656,7 @@ async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         f"{S['whoami_user']}\n🏢 {u.get('company')}\n🔑 {u.get('license_key')}\n⏳ {days_left} days"
     )
+
 
 # =========================================================
 # HANDLERS
@@ -654,6 +690,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         disable_web_page_preview=True,
         reply_markup=feedback_kb(aid, lang),
     )
+
 
 async def handle_feedback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
@@ -697,8 +734,10 @@ async def handle_feedback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception:
             pass
 
+
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("Unhandled error: %s", context.error)
+
 
 # =========================================================
 # STARTUP (retry DB init)
@@ -712,6 +751,7 @@ async def startup(app: Application) -> None:
             log.warning("DB not ready (attempt %d/10): %s", attempt + 1, e)
             await asyncio.sleep(2)
     log.error("DB never became available. Bot will run but licensing will fail closed.")
+
 
 def main() -> None:
     app = (
@@ -734,6 +774,7 @@ def main() -> None:
 
     log.info("Mokafih running (polling).")
     app.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+
 
 if __name__ == "__main__":
     main()
