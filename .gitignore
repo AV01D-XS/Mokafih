@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.log
+postgres_data/
+main.py.old
+get-docker.sh
+

@@ -1,0 +1,7 @@
+python-telegram-bot==21.6
+asyncpg==0.29.0
+httpx[http2]==0.27.2
+python-dotenv==1.0.1
+orjson==3.10.12
+uvloop==0.21.0; platform_system != "Windows"
+
