@@ -70,7 +70,7 @@ async def aitana_score(text: str) -> float:
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(
-                f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+                f"https://router.huggingface.co/models/{HF_MODEL}",
                 headers=headers,
                 json=payload,
             )
@@ -78,11 +78,10 @@ async def aitana_score(text: str) -> float:
         log.warning("HF status=%s body=%s", r.status_code, r.text[:400])
 
         if r.status_code != 200:
-            # Non-200: token, model, or quota issues
             return 0.0
 
         data = r.json()
-        # Standard text-classification response is a list of {label, score} objects. [web:1][web:8]
+        # Standard text-classification response is a list of {label, score} objects.
         if not isinstance(data, list) or not data:
             return 0.0
 
@@ -128,7 +127,7 @@ STRINGS = {
         "thanks": "Thanks — feedback recorded.",
         "lang_set_en": "✅ Language set to English.",
         "lang_set_ar": "✅ تم تغيير اللغة إلى العربية.",
-        "welcome": "Send any message and I’ll assess risk. Use /login to activate. Use /language to switch.",
+        "welcome": "Send any message and I'll assess risk. Use /login to activate. Use /language to switch.",
         "need_login": "🔒 Access denied. Activate with `/login KEY`.",
         "expired": "❌ License expired. Contact your administrator.",
         "license_full": "⛔ License seats are full.",
