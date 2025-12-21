@@ -7,6 +7,7 @@ import asyncio
 import httpx
 from dataclasses import dataclass
 from typing import Optional, List
+from dotenv import load_dotenv # pip install python-dotenv
 
 import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,6 +22,7 @@ from telegram.ext import (
     filters,
 )
 
+load_dotenv()
 # =========================================================
 # CONFIG
 # =========================================================
