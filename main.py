@@ -22,6 +22,12 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+tokenizer = AutoTokenizer.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
+import torch
+
+# Load model and tokenizer
+model = AutoModelForSequenceClassification.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
 
 load_dotenv()
 # =========================================================
@@ -120,12 +126,6 @@ async def aitana_score(text: str) -> float:
         return 0.0
 
 def new_ai_model(text):
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification
-    tokenizer = AutoTokenizer.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
-    import torch
-
-    # Load model and tokenizer
-    model = AutoModelForSequenceClassification.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
 
     # Preprocess and tokenize
     inputs = tokenizer(
@@ -511,19 +511,19 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
     """
     res = analyze(text)
 
-    ai_score = await aitana_score(text)
+    # ai_score = await aitana_score(text)
     new_ai_score = await new_ai_model(text)
-    log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
-    log.warning("New AITANA | score=%.3f | text=%r", new_ai_score["confidence"], text[:80])
+    # log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
+    log.info("New AITANA | score=%.3f | text=%r", new_ai_score["confidence"], text[:80])
 
     # AI can only escalate, never downgrade
-    if ai_score >= 0.85:
-        res.posture = "high"
-        if "AI-detected fraud pattern" not in res.hypotheses:
-            res.hypotheses.insert(0, "AI-detected fraud pattern")
-    elif ai_score >= 0.60 and res.posture == "low":
-        res.posture = "medium"
-        res.hypotheses.insert(0, "AI-detected suspicious pattern")
+    # if ai_score >= 0.85:
+    #     res.posture = "high"
+    #     if "AI-detected fraud pattern" not in res.hypotheses:
+    #         res.hypotheses.insert(0, "AI-detected fraud pattern")
+    # elif ai_score >= 0.60 and res.posture == "low":
+    #     res.posture = "medium"
+    #     res.hypotheses.insert(0, "AI-detected suspicious pattern")
     if new_ai_score["confidence"] >= 0.85:
         res.posture = "high"
         if "AI-detected fraud pattern" not in res.hypotheses:
