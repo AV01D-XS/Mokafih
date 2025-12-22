@@ -11,5 +11,3 @@ python-telegram-bot==22.5
 telegram==0.0.1
 uvloop==0.21.0; platform_system != "Windows"
 orjson==3.10.12
-transformers==4.57.3
-torch==2.9.1
