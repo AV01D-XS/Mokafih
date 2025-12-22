@@ -21,6 +21,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+import json
 
 load_dotenv()
 # =========================================================
@@ -63,7 +64,7 @@ async def aitana_score(text: str) -> float:
         log.warning("HF missing: key=%r model=%r", HF_API_KEY, HF_MODEL)
         return 0.0
 
-    payload = {"inputs": text[:4000]}
+    data = json.dumps({"inputs": text[:4000]})
     headers = {
         "Authorization": f"Bearer {HF_API_KEY}",
         "Content-Type": "application/json",
@@ -72,9 +73,9 @@ async def aitana_score(text: str) -> float:
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(
-                f"https://router.huggingface.co/models/{HF_MODEL}",
+                f"https://router.huggingface.co/hf-inference/models/{HF_MODEL}",
                 headers=headers,
-                json=payload,
+                data=data,
             )
 
         log.warning("HF status=%s body=%s", r.status_code, r.text[:400])
