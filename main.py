@@ -22,12 +22,15 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+"""
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 tokenizer = AutoTokenizer.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
 import torch
 
 # Load model and tokenizer
 model = AutoModelForSequenceClassification.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
+"""
+
 
 load_dotenv()
 # =========================================================
@@ -124,7 +127,7 @@ async def aitana_score(text: str) -> float:
     except Exception as e:
         log.exception("HF error: %s", e)
         return 0.0
-
+"""
 def new_ai_model(text):
 
     # Preprocess and tokenize
@@ -134,7 +137,9 @@ def new_ai_model(text):
         truncation=True,
         max_length=512
     )
-    
+   """
+
+
     # Get prediction
     with torch.no_grad():
         outputs = model(**inputs)
@@ -505,6 +510,7 @@ def analyze(text: str) -> AnalysisResult:
 # =========================================================
 # AI + HEURISTIC FUSION (Aitana)
 # =========================================================
+"""
 async def analyze_with_ai(text: str) -> AnalysisResult:
     """
     Wraps analyze() and allows AI to ESCALATE risk only.
@@ -533,7 +539,27 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
         res.hypotheses.insert(0, "AI-detected suspicious pattern")
 
     return res
+"""
+async def analyze_with_ai(text: str) -> AnalysisResult:
+    """
+    Wraps analyze() and allows AI to ESCALATE risk only.
+    Uses Hugging Face Inference API via aitana_score().
+    """
+    res = analyze(text)
 
+    ai_score = await aitana_score(text)
+    log.info("AITANA | score=%.3f | text=%r", ai_score, text[:80])
+
+    # AI can only escalate, never downgrade
+    if ai_score >= 0.85:
+        res.posture = "high"
+        if "AI-detected fraud pattern" not in res.hypotheses:
+            res.hypotheses.insert(0, "AI-detected fraud pattern")
+    elif ai_score >= 0.60 and res.posture == "low":
+        res.posture = "medium"
+        res.hypotheses.insert(0, "AI-detected suspicious pattern")
+
+    return res
 
 # =========================================================
 # UI
