@@ -119,6 +119,47 @@ async def aitana_score(text: str) -> float:
         log.exception("HF error: %s", e)
         return 0.0
 
+def new_ai_model(text):
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    tokenizer = AutoTokenizer.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
+    import torch
+
+    # Load model and tokenizer
+    model = AutoModelForSequenceClassification.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
+
+    # Preprocess and tokenize
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=512
+    )
+    
+    # Get prediction
+    with torch.no_grad():
+        outputs = model(**inputs)
+        predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    
+    # Get probabilities for each class
+    probs = predictions[0].tolist()
+    
+    # Create labels dictionary
+    labels = {
+        "legitimate_email": probs[0],
+        "phishing_url": probs[1],
+        "legitimate_url": probs[2],
+        "phishing_url_alt": probs[3]
+    }
+    
+    # Determine the most likely classification
+    max_label = max(labels.items(), key=lambda x: x[1])
+    log.warning("New AITANA | text=%r", max_label)
+
+    return {
+        "prediction": max_label[0],
+        "confidence": max_label[1],
+        "all_probabilities": labels
+    }
 
 # =========================================================
 # STRINGS
@@ -471,7 +512,9 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
     res = analyze(text)
 
     ai_score = await aitana_score(text)
+    new_ai_score = await new_ai_model(text)
     log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
+    log.warning("New AITANA | score=%.3f | text=%r", new_ai_score["confidence"], text[:80])
 
     # AI can only escalate, never downgrade
     if ai_score >= 0.85:
@@ -479,6 +522,13 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
         if "AI-detected fraud pattern" not in res.hypotheses:
             res.hypotheses.insert(0, "AI-detected fraud pattern")
     elif ai_score >= 0.60 and res.posture == "low":
+        res.posture = "medium"
+        res.hypotheses.insert(0, "AI-detected suspicious pattern")
+    if new_ai_score["confidence"] >= 0.85:
+        res.posture = "high"
+        if "AI-detected fraud pattern" not in res.hypotheses:
+            res.hypotheses.insert(0, "AI-detected fraud pattern")
+    elif new_ai_score["confidence"] >= 0.60 and res.posture == "low":
         res.posture = "medium"
         res.hypotheses.insert(0, "AI-detected suspicious pattern")
 
@@ -591,6 +641,7 @@ async def require_license_or_reject(update: Update, lang: str) -> bool:
 # =========================================================
 # COMMANDS
 # =========================================================
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         lang = await db.get_lang(update.effective_user.id)
