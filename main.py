@@ -86,15 +86,20 @@ async def aitana_score(text: str) -> float:
             return 0.0
 
         data = r.json()
-        print(data)
         # Standard text-classification response is a list of {label, score} objects.
         if not isinstance(data, list) or not data:
             return 0.0
 
-        # Pick the label with highest score
-        best = max(data, key=lambda x: x.get("score", 0.0))
-        label = str(best.get("label", "")).lower()
-        score = float(best.get("score", 0.0))
+        groups = data if isinstance(data, list) else []
+        candidates = [
+            c for g in groups if isinstance(g, list) for c in g if isinstance(c, dict)
+        ]
+        if not candidates:
+            label, score = "", 0.0
+        else:
+            best = max(candidates, key=lambda x: float(x.get("score") or 0.0))
+            label = str(best.get("label") or "").lower()
+            score = float(best.get("score") or 0.0)
 
         log.warning("HF best label=%s score=%.3f", label, score)
 
