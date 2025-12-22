@@ -1,27 +1,27 @@
+import asyncio
+import json
+import logging
 import os
 import re
-import time
 import secrets
-import logging
-import asyncio
-import httpx
+import time
 from dataclasses import dataclass
-from typing import Optional, List
-from dotenv import load_dotenv # pip install python-dotenv
+from typing import List, Optional
 
 import asyncpg
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import httpx
+from dotenv import load_dotenv  # pip install python-dotenv
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     ApplicationBuilder,
-    ContextTypes,
-    CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
     filters,
 )
-import json
 
 load_dotenv()
 # =========================================================
@@ -34,7 +34,9 @@ DB_NAME = os.getenv("DB_NAME", "").strip()
 DB_USER = os.getenv("DB_USER", "").strip()
 DB_PASS = os.getenv("DB_PASS", "").strip()
 
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
+ADMIN_IDS = [
+    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+]
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN is required")
@@ -84,6 +86,7 @@ async def aitana_score(text: str) -> float:
             return 0.0
 
         data = r.json()
+        print(data)
         # Standard text-classification response is a list of {label, score} objects.
         if not isinstance(data, list) or not data:
             return 0.0
@@ -179,11 +182,18 @@ STRINGS = {
 FLAG_TEXT = {
     "urgency": {"en": "Uses urgent / pressure language", "ar": "أسلوب استعجال وضغط"},
     "sensitive": {"en": "Requests sensitive information", "ar": "طلب معلومات حساسة"},
-    "context": {"en": "Mentions bank / payment / delivery", "ar": "سياق بنكي أو دفع أو توصيل"},
+    "context": {
+        "en": "Mentions bank / payment / delivery",
+        "ar": "سياق بنكي أو دفع أو توصيل",
+    },
     "url": {"en": "Contains external link", "ar": "يحتوي على رابط خارجي"},
-    "login_domain": {"en": "Link resembles login / verification page", "ar": "الرابط يشبه صفحة تسجيل أو تحقق"},
+    "login_domain": {
+        "en": "Link resembles login / verification page",
+        "ar": "الرابط يشبه صفحة تسجيل أو تحقق",
+    },
     "mixed": {"en": "Mixed-language social engineering", "ar": "هندسة اجتماعية بلغتين"},
 }
+
 
 # =========================================================
 # DATABASE (timeouts + migrations)
@@ -204,7 +214,8 @@ class Database:
             command_timeout=5,
         )
         async with self.pool.acquire() as c:
-            await c.execute("""
+            await c.execute(
+                """
                 CREATE TABLE IF NOT EXISTS licenses (
                     key TEXT PRIMARY KEY,
                     company TEXT NOT NULL,
@@ -213,30 +224,37 @@ class Database:
                     created_at DOUBLE PRECISION NOT NULL,
                     status TEXT NOT NULL DEFAULT 'active'
                 )
-            """)
-            await c.execute("""
+            """
+            )
+            await c.execute(
+                """
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
                     license_key TEXT REFERENCES licenses(key),
                     login_at DOUBLE PRECISION,
                     language TEXT DEFAULT 'en'
                 )
-            """)
-            await c.execute("""
+            """
+            )
+            await c.execute(
+                """
                 CREATE TABLE IF NOT EXISTS analyses (
                     id TEXT PRIMARY KEY,
                     user_id BIGINT,
                     label TEXT,
                     created_at DOUBLE PRECISION NOT NULL
                 )
-            """)
+            """
+            )
         log.info("PostgreSQL ready")
 
     async def get_lang(self, user_id: int) -> str:
         if not self.pool:
             return "en"
         async with self.pool.acquire() as c:
-            row = await c.fetchrow("SELECT language FROM users WHERE user_id=$1", user_id)
+            row = await c.fetchrow(
+                "SELECT language FROM users WHERE user_id=$1", user_id
+            )
             if row and row["language"] in ("en", "ar"):
                 return row["language"]
         return "en"
@@ -245,30 +263,40 @@ class Database:
         if not self.pool:
             return
         async with self.pool.acquire() as c:
-            await c.execute("""
+            await c.execute(
+                """
                 INSERT INTO users (user_id, language, login_at)
                 VALUES ($1, $2, 0)
                 ON CONFLICT (user_id) DO UPDATE SET language = EXCLUDED.language
-            """, user_id, lang)
+            """,
+                user_id,
+                lang,
+            )
 
     async def get_user_with_license(self, user_id: int) -> Optional[asyncpg.Record]:
         if not self.pool:
             return None
         async with self.pool.acquire() as c:
-            return await c.fetchrow("""
+            return await c.fetchrow(
+                """
                 SELECT u.user_id, u.license_key, u.login_at, u.language,
                        l.company, l.max_seats, l.expires_at, l.status
                 FROM users u
                 LEFT JOIN licenses l ON u.license_key = l.key
                 WHERE u.user_id = $1
-            """, user_id)
+            """,
+                user_id,
+            )
 
-    async def create_license(self, key: str, company: str, seats: int, days: int) -> None:
+    async def create_license(
+        self, key: str, company: str, seats: int, days: int
+    ) -> None:
         if not self.pool:
             return
         expires_at = time.time() + (days * 86400)
         async with self.pool.acquire() as c:
-            await c.execute("""
+            await c.execute(
+                """
                 INSERT INTO licenses (key, company, max_seats, expires_at, created_at, status)
                 VALUES ($1, $2, $3, $4, $5, 'active')
                 ON CONFLICT (key) DO UPDATE SET
@@ -276,7 +304,13 @@ class Database:
                     max_seats = EXCLUDED.max_seats,
                     expires_at = EXCLUDED.expires_at,
                     status = 'active'
-            """, key, company, seats, expires_at, time.time())
+            """,
+                key,
+                company,
+                seats,
+                expires_at,
+                time.time(),
+            )
 
     async def get_license(self, key: str) -> Optional[asyncpg.Record]:
         if not self.pool:
@@ -288,30 +322,42 @@ class Database:
         if not self.pool:
             return 0
         async with self.pool.acquire() as c:
-            row = await c.fetchrow("SELECT COUNT(*) AS cnt FROM users WHERE license_key=$1", key)
+            row = await c.fetchrow(
+                "SELECT COUNT(*) AS cnt FROM users WHERE license_key=$1", key
+            )
             return int(row["cnt"])
 
     async def login_user(self, user_id: int, key: str) -> None:
         if not self.pool:
             return
         async with self.pool.acquire() as c:
-            await c.execute("""
+            await c.execute(
+                """
                 INSERT INTO users (user_id, license_key, login_at)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (user_id) DO UPDATE SET
                     license_key = EXCLUDED.license_key,
                     login_at = EXCLUDED.login_at
-            """, user_id, key, time.time())
+            """,
+                user_id,
+                key,
+                time.time(),
+            )
 
     async def save_analysis(self, aid: str, user_id: int) -> None:
         if not self.pool:
             return
         async with self.pool.acquire() as c:
-            await c.execute("""
+            await c.execute(
+                """
                 INSERT INTO analyses (id, user_id, created_at)
                 VALUES ($1, $2, $3)
                 ON CONFLICT DO NOTHING
-            """, aid, user_id, time.time())
+            """,
+                aid,
+                user_id,
+                time.time(),
+            )
 
     async def set_label(self, aid: str, label: str) -> bool:
         if not self.pool:
@@ -375,7 +421,9 @@ def analyze(text: str) -> AnalysisResult:
     if urls:
         signals.add("url")
         for u in urls:
-            if any(x in u.lower() for x in ["login", "verify", "secure", "bank", "update"]):
+            if any(
+                x in u.lower() for x in ["login", "verify", "secure", "bank", "update"]
+            ):
                 signals.add("login_domain")
 
     if {"urgency", "sensitive", "url"} <= signals:
@@ -389,9 +437,13 @@ def analyze(text: str) -> AnalysisResult:
 
     hypotheses: List[str] = []
     if "sensitive" in signals:
-        hypotheses.append("Account takeover attempt" if not ar else "محاولة استيلاء على حساب")
+        hypotheses.append(
+            "Account takeover attempt" if not ar else "محاولة استيلاء على حساب"
+        )
     if "urgency" in signals:
-        hypotheses.append("Social engineering pressure" if not ar else "ضغط هندسة اجتماعية")
+        hypotheses.append(
+            "Social engineering pressure" if not ar else "ضغط هندسة اجتماعية"
+        )
     if "url" in signals:
         hypotheses.append("Generic phishing attempt" if not ar else "محاولة تصيّد عامة")
     if "context" in signals:
@@ -433,12 +485,14 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
 # =========================================================
 def feedback_kb(aid: str, lang: str) -> InlineKeyboardMarkup:
     S = STRINGS[lang]
-    return InlineKeyboardMarkup([
+    return InlineKeyboardMarkup(
         [
-            InlineKeyboardButton(S["safe"], callback_data=f"fb:{aid}:safe"),
-            InlineKeyboardButton(S["scam"], callback_data=f"fb:{aid}:scam"),
+            [
+                InlineKeyboardButton(S["safe"], callback_data=f"fb:{aid}:safe"),
+                InlineKeyboardButton(S["scam"], callback_data=f"fb:{aid}:scam"),
+            ]
         ]
-    ])
+    )
 
 
 def build_report(res: AnalysisResult, lang: str) -> str:
@@ -510,12 +564,16 @@ async def require_license_or_reject(update: Update, lang: str) -> bool:
         return False
 
     if not user or not user.get("license_key"):
-        await update.effective_message.reply_text(S["need_login"], parse_mode=ParseMode.MARKDOWN)
+        await update.effective_message.reply_text(
+            S["need_login"], parse_mode=ParseMode.MARKDOWN
+        )
         return False
 
     # license row missing or inactive
     if user.get("status") != "active" or user.get("expires_at") is None:
-        await update.effective_message.reply_text(S["need_login"], parse_mode=ParseMode.MARKDOWN)
+        await update.effective_message.reply_text(
+            S["need_login"], parse_mode=ParseMode.MARKDOWN
+        )
         return False
 
     if float(user["expires_at"]) < time.time():
@@ -546,7 +604,9 @@ async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         log.error("DB error set_lang: %s", e)
         new_lang = "en"
     await update.effective_message.reply_text(
-        STRINGS[new_lang]["lang_set_ar"] if new_lang == "ar" else STRINGS[new_lang]["lang_set_en"]
+        STRINGS[new_lang]["lang_set_ar"]
+        if new_lang == "ar"
+        else STRINGS[new_lang]["lang_set_en"]
     )
 
 
@@ -581,7 +641,9 @@ async def cmd_genkey(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(S["db_down"])
         return
 
-    await update.effective_message.reply_text(f"✅ Key: `{key}`", parse_mode=ParseMode.MARKDOWN)
+    await update.effective_message.reply_text(
+        f"✅ Key: `{key}`", parse_mode=ParseMode.MARKDOWN
+    )
 
 
 async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -641,7 +703,9 @@ async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     S = STRINGS[lang]
 
     if is_admin(user_id):
-        await update.effective_message.reply_text(f"{S['whoami_admin']}\nID: `{user_id}`", parse_mode=ParseMode.MARKDOWN)
+        await update.effective_message.reply_text(
+            f"{S['whoami_admin']}\nID: `{user_id}`", parse_mode=ParseMode.MARKDOWN
+        )
         return
 
     try:
@@ -745,6 +809,13 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 # STARTUP (retry DB init)
 # =========================================================
 async def startup(app: Application) -> None:
+    # Ensure no webhook is set to avoid getUpdates conflicts when polling.
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        log.info("Webhook cleared before polling.")
+    except Exception as e:
+        log.warning("Failed to clear webhook: %s", e)
+
     for attempt in range(10):
         try:
             await db.init()
@@ -756,12 +827,7 @@ async def startup(app: Application) -> None:
 
 
 def main() -> None:
-    app = (
-        ApplicationBuilder()
-        .token(TELEGRAM_TOKEN)
-        .post_init(startup)
-        .build()
-    )
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(startup).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("language", cmd_language))
