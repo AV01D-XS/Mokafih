@@ -22,17 +22,9 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-"""
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-tokenizer = AutoTokenizer.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
-import torch
-
-# Load model and tokenizer
-model = AutoModelForSequenceClassification.from_pretrained("cybersectony/phishing-email-detection-distilbert_v2.4.1")
-"""
-
 
 load_dotenv()
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -75,7 +67,7 @@ async def aitana_score(text: str) -> float:
         log.warning("HF missing: key=%r model=%r", HF_API_KEY, HF_MODEL)
         return 0.0
 
-    data = json.dumps({"inputs": text[:4000]})
+    payload = {"inputs": text[:4000]}
     headers = {
         "Authorization": f"Bearer {HF_API_KEY}",
         "Content-Type": "application/json",
@@ -86,7 +78,7 @@ async def aitana_score(text: str) -> float:
             r = await client.post(
                 f"https://router.huggingface.co/hf-inference/models/{HF_MODEL}",
                 headers=headers,
-                data=data,
+                json=payload,
             )
 
         log.warning("HF status=%s body=%s", r.status_code, r.text[:400])
@@ -95,30 +87,35 @@ async def aitana_score(text: str) -> float:
             return 0.0
 
         data = r.json()
-        # Standard text-classification response is a list of {label, score} objects.
+        # Accept either flat list or list of lists. [web:1][web:102]
         if not isinstance(data, list) or not data:
             return 0.0
 
-        groups = data if isinstance(data, list) else []
-        candidates = [
-            c for g in groups if isinstance(g, list) for c in g if isinstance(c, dict)
-        ]
-        if not candidates:
-            label, score = "", 0.0
+        if isinstance(data[0], dict):
+            candidates = data
         else:
-            best = max(candidates, key=lambda x: float(x.get("score") or 0.0))
-            label = str(best.get("label") or "").lower()
-            score = float(best.get("score") or 0.0)
+            candidates = [
+                c
+                for group in data if isinstance(group, list)
+                for c in group if isinstance(c, dict)
+            ]
+
+        if not candidates:
+            return 0.0
+
+        best = max(candidates, key=lambda x: float(x.get("score") or 0.0))
+        label = str(best.get("label") or "").lower()
+        score = float(best.get("score") or 0.0)
 
         log.warning("HF best label=%s score=%.3f", label, score)
 
         # Map your model's labels to "fraud probability".
-        # Adjust these mappings based on the actual labels returned by your model.
+        # Adjust based on actual labels from your model.
         fraud_like_labels = {"fraud", "scam", "malicious", "label_1"}
         if label in fraud_like_labels:
             return score
 
-        # Example: if using a negative/positive sentiment model
+        # Example: if using a sentiment model:
         if label in {"negative", "neg"}:
             return score
 
@@ -127,44 +124,7 @@ async def aitana_score(text: str) -> float:
     except Exception as e:
         log.exception("HF error: %s", e)
         return 0.0
-"""
-def new_ai_model(text):
 
-    # Preprocess and tokenize
-    inputs = tokenizer(
-        text,
-        return_tensors="pt",
-        truncation=True,
-        max_length=512
-    )
-   """
-
-
-    # Get prediction
-    with torch.no_grad():
-        outputs = model(**inputs)
-        predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    
-    # Get probabilities for each class
-    probs = predictions[0].tolist()
-    
-    # Create labels dictionary
-    labels = {
-        "legitimate_email": probs[0],
-        "phishing_url": probs[1],
-        "legitimate_url": probs[2],
-        "phishing_url_alt": probs[3]
-    }
-    
-    # Determine the most likely classification
-    max_label = max(labels.items(), key=lambda x: x[1])
-    log.warning("New AITANA | text=%r", max_label)
-
-    return {
-        "prediction": max_label[0],
-        "confidence": max_label[1],
-        "all_probabilities": labels
-    }
 
 # =========================================================
 # STRINGS
@@ -510,36 +470,6 @@ def analyze(text: str) -> AnalysisResult:
 # =========================================================
 # AI + HEURISTIC FUSION (Aitana)
 # =========================================================
-"""
-async def analyze_with_ai(text: str) -> AnalysisResult:
-    """
-    Wraps analyze() and allows AI to ESCALATE risk only.
-    """
-    res = analyze(text)
-
-    # ai_score = await aitana_score(text)
-    new_ai_score = await new_ai_model(text)
-    # log.warning("AITANA | score=%.3f | text=%r", ai_score, text[:80])
-    log.info("New AITANA | score=%.3f | text=%r", new_ai_score["confidence"], text[:80])
-
-    # AI can only escalate, never downgrade
-    # if ai_score >= 0.85:
-    #     res.posture = "high"
-    #     if "AI-detected fraud pattern" not in res.hypotheses:
-    #         res.hypotheses.insert(0, "AI-detected fraud pattern")
-    # elif ai_score >= 0.60 and res.posture == "low":
-    #     res.posture = "medium"
-    #     res.hypotheses.insert(0, "AI-detected suspicious pattern")
-    if new_ai_score["confidence"] >= 0.85:
-        res.posture = "high"
-        if "AI-detected fraud pattern" not in res.hypotheses:
-            res.hypotheses.insert(0, "AI-detected fraud pattern")
-    elif new_ai_score["confidence"] >= 0.60 and res.posture == "low":
-        res.posture = "medium"
-        res.hypotheses.insert(0, "AI-detected suspicious pattern")
-
-    return res
-"""
 async def analyze_with_ai(text: str) -> AnalysisResult:
     """
     Wraps analyze() and allows AI to ESCALATE risk only.
@@ -560,6 +490,7 @@ async def analyze_with_ai(text: str) -> AnalysisResult:
         res.hypotheses.insert(0, "AI-detected suspicious pattern")
 
     return res
+
 
 # =========================================================
 # UI
@@ -667,7 +598,6 @@ async def require_license_or_reject(update: Update, lang: str) -> bool:
 # =========================================================
 # COMMANDS
 # =========================================================
-
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         lang = await db.get_lang(update.effective_user.id)
